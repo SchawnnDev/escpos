@@ -35,6 +35,12 @@ const (
 	QRCodeErrorCorrectionLevelH uint8 = 51 // 30% recovery capacity
 )
 
+// QR code model constants
+const (
+	QRCodeModel1 uint8 = 49 // Model 1 (older, smaller capacity)
+	QRCodeModel2 uint8 = 50 // Model 2 (newer, enhanced functionality)
+)
+
 // Barcode types
 const (
 	BarcodeUPCA    uint8 = 0
@@ -403,13 +409,28 @@ func (e *Escpos) Barcode(barcodeType uint8, code string) (int, error) {
 }
 
 // QRCode prints a QR code
-// code: the data to encode (max 7089 characters)
-// model: QR code model (false for model 1, true for model 2)
-// size: size in dots (1-16)
-// correctionLevel: error correction level (use QRCodeErrorCorrectionLevel* constants)
-func (e *Escpos) QRCode(code string, model bool, size uint8, correctionLevel uint8) (int, error) {
-	if len(code) > 7089 {
-		return 0, fmt.Errorf("QR code data too long (max 7089 characters)")
+//
+// Parameters:
+//   - code: the data to encode (max 7089 characters for Model 2, 1167 for Model 1)
+//   - model: QR code model to use (QRCodeModel1 or QRCodeModel2)
+//   - size: size of QR code modules in dots (1-16)
+//   - correctionLevel: error correction level with these options:
+//   - QRCodeErrorCorrectionLevelL: Recovers 7% of data
+//   - QRCodeErrorCorrectionLevelM: Recovers 15% of data
+//   - QRCodeErrorCorrectionLevelQ: Recovers 25% of data
+//   - QRCodeErrorCorrectionLevelH: Recovers 30% of data
+//
+// Returns the number of bytes written and any error encountered.
+// Use Model 2 for most applications as it offers better capacity and features.
+func (e *Escpos) QRCode(code string, model uint8, size uint8, correctionLevel uint8) (int, error) {
+	// Check model capacity limits
+	maxLength := 7089 // Default for Model 2
+	if model == QRCodeModel1 {
+		maxLength = 1167
+	}
+
+	if len(code) > maxLength {
+		return 0, fmt.Errorf("QR code data too long (max %d characters for the selected model)", maxLength)
 	}
 
 	// Validate and adjust parameters
@@ -423,15 +444,16 @@ func (e *Escpos) QRCode(code string, model bool, size uint8, correctionLevel uin
 		correctionLevel = QRCodeErrorCorrectionLevelL
 	}
 
-	var m byte = 49 // Model 1
+	// Validate model parameter
+	if model != QRCodeModel1 && model != QRCodeModel2 {
+		model = QRCodeModel2 // Default to Model 2 if invalid
+	}
+
 	var written int
 	var err error
 
 	// Set QR code model
-	if model {
-		m = 50 // Model 2
-	}
-	_, err = e.WriteRaw([]byte{gs, '(', 'k', 4, 0, 49, 65, m, 0})
+	_, err = e.WriteRaw([]byte{gs, '(', 'k', 4, 0, 49, 65, model, 0})
 	if err != nil {
 		return 0, fmt.Errorf("failed to set QR code model: %w", err)
 	}
