@@ -507,7 +507,7 @@ func (e *Escpos) PrintImage(image image.Image) (int, error) {
 func (e *Escpos) PrintImageWithProcessing(image image.Image, processMethod uint8, highDensityVertical bool, highDensityHorizontal bool) (int, error) {
 	switch processMethod {
 	case ImageProcessDither:
-		data, err := printImageDither(image, true, true)
+		data, err := printImageDither(image, highDensityVertical, highDensityHorizontal)
 		if err != nil {
 			return 0, fmt.Errorf("failed to transform dithered image: %w", err)
 		}
