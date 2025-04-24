@@ -92,18 +92,10 @@ type Escpos struct {
 
 // New creates a new Escpos printer instance
 func New(printer Printer) *Escpos {
-	return &Escpos{
+	pos := &Escpos{
 		dst: bufio.NewWriter(printer),
-		// Set default style values
-		Style: Style{
-			Bold:      false,
-			Width:     1,
-			Height:    1,
-			Reverse:   false,
-			Underline: 0,
-			Justify:   JustifyLeft,
-		},
 	}
+	return pos.DefaultStyle()
 }
 
 // SetConfig sets the printer configuration options
@@ -225,6 +217,21 @@ func (e *Escpos) WriteWEU(data string) (int, error) {
 		return 0, fmt.Errorf("failed to convert to Western European encoding: %w", err)
 	}
 	return e.Write(weu)
+}
+
+// DefaultStyle resets the style to default values
+func (e *Escpos) DefaultStyle() *Escpos {
+	e.Style = Style{
+		Bold:       false,
+		Width:      1,
+		Height:     1,
+		Reverse:    false,
+		Underline:  0,
+		UpsideDown: false,
+		Rotate:     false,
+		Justify:    JustifyLeft,
+	}
+	return e
 }
 
 // Bold sets the printer to print bold text
@@ -505,7 +512,7 @@ func (e *Escpos) PrintImage(image image.Image) (int, error) {
 func (e *Escpos) PrintImageWithProcessing(image image.Image, processMethod uint8, highDensityVertical bool, highDensityHorizontal bool) (int, error) {
 	switch processMethod {
 	case ImageProcessDither:
-		data, err := printImageDither(image, highDensityVertical, highDensityHorizontal)
+		data, err := PrepareImageForPrinting(image, highDensityVertical, highDensityHorizontal)
 		if err != nil {
 			return 0, fmt.Errorf("failed to transform dithered image: %w", err)
 		}

@@ -8,12 +8,12 @@ import (
 	"image/color"
 )
 
-// printImageDither prints a dithered image to the printer.
+// PrepareImageForPrinting prepares a dithered image for printing on a thermal printer.
 // It uses Floyd-Steinberg dithering to convert the image to black and white.
 // highDensityVertical and highDensityHorizontal control the density of the image.
 // The image is rasterized and converted to a byte array for printing (header included).
 // todo: add support for fragmentHeight, center, and maxWidth
-func printImageDither(img image.Image, highDensityVertical bool, highDensityHorizontal bool) (data []byte, err error) {
+func PrepareImageForPrinting(img image.Image, highDensityVertical bool, highDensityHorizontal bool) (data []byte, err error) {
 	im, err := transformImage(img)
 	if err != nil {
 		return nil, err
