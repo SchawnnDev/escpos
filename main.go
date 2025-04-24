@@ -3,10 +3,8 @@ package escpos
 import (
 	"bufio"
 	"fmt"
-	"image"
-	"io"
-
 	"github.com/justinmichaelvieira/iconv"
+	"image"
 )
 
 // Style defines the text formatting options for the printer
@@ -93,9 +91,9 @@ type Escpos struct {
 }
 
 // New creates a new Escpos printer instance
-func New(dst io.Writer) *Escpos {
+func New(printer Printer) *Escpos {
 	return &Escpos{
-		dst: bufio.NewWriter(dst),
+		dst: bufio.NewWriter(printer),
 		// Set default style values
 		Style: Style{
 			Bold:      false,
