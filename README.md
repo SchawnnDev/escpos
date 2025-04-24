@@ -31,7 +31,7 @@ It implements the protocol described in [this Command Manual](https://pos-x.com/
 
 Install the package via the following:
 
-    go get -u github.com/hennedo/escpos
+    go get -u github.com/schawnndev/escpos
 
 ## Usage ##
 
@@ -41,7 +41,7 @@ The escpos package can be used as the following:
 package main
 
 import (
-	"github.com/hennedo/escpos"
+	"github.com/schawnndev/escpos"
 	"net"
 )
 
@@ -59,7 +59,7 @@ func main() {
 	p.LineFeed()
 	p.Bold(false).Underline(2).Justify(escpos.JustifyCenter).Write("this is underlined")
 	p.LineFeed()
-	p.QRCode("https://github.com/hennedo/escpos", true, 10, escpos.QRCodeErrorCorrectionLevelH)
+	p.QRCode("https://github.com/hennedo/escpos", escpos.QRCodeModel2, 3, escpos.QRCodeErrorCorrectionLevelL)
 
 
 
@@ -90,5 +90,5 @@ This is a (not complete) list of supported and tested devices.
 |--------------|----------| --------- | -------- | ------ | ------ |
 | Epson        | TM-T20II | ✅        | ✅        | ✅     | ✅     |
 | Epson        | TM-T88II | ☑️<br/>UpsideDown Printing not supported  | ✅        |       | ✅     |
-| Munbyn       | ITPP047P | ☑️<br/>UpsideDown Printing not supported  | ✅        |  ✅    | ✅     |
+| Munbyn       | ITPP047P | ✅  | ✅        |  ✅    | ✅     |
 
