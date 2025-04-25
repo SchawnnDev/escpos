@@ -3,8 +3,13 @@ package escpos
 import (
 	"bufio"
 	"fmt"
-	"github.com/justinmichaelvieira/iconv"
 	"image"
+	"io"
+	"time"
+
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // Style defines the text formatting options for the printer
@@ -15,14 +20,22 @@ type Style struct {
 	Underline     uint8 // can be 0, 1 or 2
 	UpsideDown    bool
 	Rotate        bool
-	Justify       uint8
+	Justify       Justify
 }
+
+type Justify uint8
 
 // Justification constants
 const (
-	JustifyLeft   uint8 = 0
-	JustifyCenter uint8 = 1
-	JustifyRight  uint8 = 2
+	JustifyLeft   Justify = 0
+	JustifyCenter Justify = 1
+	JustifyRight  Justify = 2
+)
+
+// Font type constants
+const (
+	FontA uint8 = 0 // Font A (12x24)
+	FontB uint8 = 1 // Font B (9x24)
 )
 
 // QR code error correction levels
@@ -58,11 +71,26 @@ const (
 	HRIPositionBoth  uint8 = 3
 )
 
+// Real-time status command constants
+const (
+	// Real-time status commands
+	RT_STATUS_ONLINE byte = 1
+	RT_STATUS_PAPER  byte = 4
+
+	// Status response masks
+	RT_MASK_ONLINE    byte = 0x08
+	RT_MASK_PAPER     byte = 0x03
+	RT_MASK_NOPAPER   byte = 0x03
+	RT_MASK_LOWPAPER  byte = 0x02
+	RT_MASK_PAPERSTOP byte = 0x01
+)
+
 // ESC/POS command bytes
 const (
 	esc byte = 0x1B
 	gs  byte = 0x1D
 	fs  byte = 0x1C
+	dle byte = 0x10 // Data Link Escape - used for real-time commands
 )
 
 // Image processing method constants
@@ -71,6 +99,38 @@ const (
 	ImageProcessDither uint8 = 0
 	// ImageProcessThreshold applies simple threshold-based conversion
 	ImageProcessThreshold uint8 = 1
+)
+
+// Code page constants
+const (
+	CodePagePC437      uint8 = 0  // USA, Standard Europe
+	CodePageKatakana   uint8 = 1  // Katakana
+	CodePagePC850      uint8 = 2  // Multilingual
+	CodePagePC860      uint8 = 3  // Portuguese
+	CodePagePC863      uint8 = 4  // Canadian-French
+	CodePagePC865      uint8 = 5  // Nordic
+	CodePageWPC1252    uint8 = 16 // Latin 1
+	CodePagePC866      uint8 = 17 // Cyrillic #2
+	CodePagePC852      uint8 = 18 // Latin 2
+	CodePagePC858      uint8 = 19 // Euro
+	CodePageIranII     uint8 = 20 // Iran II
+	CodePageLatvian    uint8 = 21 // Latvian
+	CodePageISO88596   uint8 = 22 // Arabic
+	CodePageLCDTurkish uint8 = 24 // Turkish
+	CodePageISO8859_15 uint8 = 25 // Latin 9
+	CodePageCP1098     uint8 = 38 // Farsi
+	CodePageCP864      uint8 = 40 // Arabic
+	CodePageISO8859_2  uint8 = 41 // Latin 2
+	CodePageCP1125     uint8 = 42 // Ukrainian
+	CodePageCP1250     uint8 = 47 // Latin 2
+	CodePageCP1251     uint8 = 48 // Cyrillic
+	CodePageCP1253     uint8 = 49 // Greek
+	CodePageCP1254     uint8 = 50 // Turkish
+	CodePageCP1255     uint8 = 51 // Hebrew
+	CodePageCP1256     uint8 = 52 // Arabic
+	CodePageCP1257     uint8 = 53 // Baltic
+	CodePageCP1258     uint8 = 54 // Vietnamese
+	CodePageKZ1048     uint8 = 55 // Kazakhstan
 )
 
 // PrinterConfig contains options to disable specific formatting features
@@ -86,6 +146,7 @@ type PrinterConfig struct {
 // Escpos represents a ESC/POS printer connection
 type Escpos struct {
 	dst    *bufio.Writer
+	reader io.Reader // Added reader for status queries
 	Style  Style
 	config PrinterConfig
 }
@@ -93,7 +154,8 @@ type Escpos struct {
 // New creates a new Escpos printer instance
 func New(printer Printer) *Escpos {
 	pos := &Escpos{
-		dst: bufio.NewWriter(printer),
+		dst:    bufio.NewWriter(printer),
+		reader: printer,
 	}
 	return pos.DefaultStyle()
 }
@@ -179,14 +241,14 @@ func (e *Escpos) Write(data string) (int, error) {
 
 	// Justify
 	if !e.config.DisableJustify {
-		_, err = e.WriteRaw([]byte{esc, 'a', e.Style.Justify})
+		_, err = e.WriteRaw([]byte{esc, 'a', byte(e.Style.Justify)})
 		if err != nil {
 			return 0, fmt.Errorf("failed to set justification: %w", err)
 		}
 	}
 
 	// Width / Height
-	_, err = e.WriteRaw([]byte{gs, '!', ((e.Style.Width - 1) << 4) | (e.Style.Height - 1)})
+	_, err = e.SetSize(e.Style.Height, e.Style.Width)
 	if err != nil {
 		return 0, fmt.Errorf("failed to set text size: %w", err)
 	}
@@ -203,20 +265,80 @@ func (e *Escpos) Write(data string) (int, error) {
 
 // WriteGBK writes a string to the printer using GBK encoding
 func (e *Escpos) WriteGBK(data string) (int, error) {
-	gbk, err := iconv.ConvertString(data, iconv.GBK, iconv.UTF8)
-	if err != nil {
-		return 0, fmt.Errorf("failed to convert to GBK encoding: %w", err)
-	}
-	return e.Write(gbk)
+	return e.WriteWithEncoding(data, simplifiedchinese.GBK, CodePagePC437)
 }
 
 // WriteWEU writes a string to the printer using Western European encoding
 func (e *Escpos) WriteWEU(data string) (int, error) {
-	weu, err := iconv.ConvertString(data, iconv.CP850, iconv.UTF8)
-	if err != nil {
-		return 0, fmt.Errorf("failed to convert to Western European encoding: %w", err)
+	return e.WriteWithEncoding(data, charmap.CodePage850, CodePagePC850)
+}
+
+// WriteRawWEU writes raw bytes to the printer using Western European encoding
+// make sure to set the code page first
+func (e *Escpos) WriteRawWEU(data string) (int, error) {
+	return e.WriteRawWithEncoding([]byte(data), charmap.CodePage850)
+}
+
+// WriteEncoded is deprecated, use WriteWithEncoding instead
+func (e *Escpos) WriteEncoded(data string, encodingName string, codepage uint8) (int, error) {
+	// For backward compatibility, map old encoding names to new encoders
+	var enc encoding.Encoding
+	switch encodingName {
+	case "GBK":
+		enc = simplifiedchinese.GBK
+	case "CP850":
+		enc = charmap.CodePage850
+	default:
+		return 0, fmt.Errorf("unsupported encoding: %s", encodingName)
 	}
-	return e.Write(weu)
+
+	return e.WriteWithEncoding(data, enc, codepage)
+}
+
+// WriteWithEncoding writes text after converting it from UTF-8 to the specified encoding
+// and setting the appropriate code page on the printer
+func (e *Escpos) WriteWithEncoding(data string, enc encoding.Encoding, codepage uint8) (int, error) {
+	// First set the code page
+	_, err := e.SelectCodePage(codepage)
+	if err != nil {
+		return 0, fmt.Errorf("failed to set code page: %w", err)
+	}
+
+	encoder := enc.NewEncoder()
+
+	data, err = encoding.ReplaceUnsupported(encoder).String(data)
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode data: %w", err)
+	}
+
+	// Convert from UTF-8 to the target encoding
+	encBytes, err := encoder.Bytes([]byte(data))
+	if err != nil {
+		return 0, fmt.Errorf("failed to convert string encoding: %w", err)
+	}
+
+	// Write the converted text
+	return e.Write(string(encBytes))
+}
+
+// WriteRawWithEncoding writes raw bytes to the printer after converting them from UTF-8
+// to the specified encoding, make sure to set the code page first
+func (e *Escpos) WriteRawWithEncoding(data []byte, enc encoding.Encoding) (int, error) {
+	encoder := enc.NewEncoder()
+
+	data, err := encoding.ReplaceUnsupported(encoder).Bytes(data)
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode data: %w", err)
+	}
+
+	// Convert from UTF-8 to the target encoding
+	encBytes, err := encoder.Bytes(data)
+	if err != nil {
+		return 0, fmt.Errorf("failed to convert string encoding: %w", err)
+	}
+
+	// Write the converted text
+	return e.WriteRaw(encBytes)
 }
 
 // DefaultStyle resets the style to default values
@@ -257,7 +379,7 @@ func (e *Escpos) Reverse(p bool) *Escpos {
 
 // Justify sets text justification (alignment)
 // Use JustifyLeft, JustifyCenter, or JustifyRight constants
-func (e *Escpos) Justify(p uint8) *Escpos {
+func (e *Escpos) Justify(p Justify) *Escpos {
 	if p > JustifyRight {
 		p = JustifyLeft
 	}
@@ -277,24 +399,79 @@ func (e *Escpos) UpsideDown(p bool) *Escpos {
 	return e
 }
 
-// Size sets the font size. Width and Height should be between 1 and 5.
+// Size sets the font size. Width and Height should be between 1 and 8.
 func (e *Escpos) Size(width uint8, height uint8) *Escpos {
-	// Ensure values are between 1 and 5
+	// Ensure values are between 1 and 8
 	if width < 1 {
 		width = 1
-	} else if width > 5 {
-		width = 5
+	} else if width > 8 {
+		width = 8
 	}
 
 	if height < 1 {
 		height = 1
-	} else if height > 5 {
-		height = 5
+	} else if height > 8 {
+		height = 8
 	}
 
 	e.Style.Width = width
 	e.Style.Height = height
 	return e
+}
+
+// SetSize sets the font size by specifying both height and width (1-8)
+// The function applies the corresponding byte value based on the formula:
+// c = (2 << 3) * (width - 1) + (height - 1)
+func (e *Escpos) SetSize(height, width uint8) (int, error) {
+	// Ensure values are between 1 and 8
+	if width < 1 {
+		width = 1
+	} else if width > 8 {
+		width = 8
+	}
+
+	if height < 1 {
+		height = 1
+	} else if height > 8 {
+		height = 8
+	}
+
+	// Calculate the size byte using the formula from PHP implementation
+	sizeByte := (2<<3)*(width-1) + (height - 1)
+
+	// Update the style
+	e.Style.Height = height
+	e.Style.Width = width
+
+	// Send the command to the printer
+	return e.WriteRaw([]byte{gs, '!', sizeByte})
+}
+
+// SetAlign sets the justification for text
+// Use JustifyLeft, JustifyCenter, or JustifyRight constants
+func (e *Escpos) SetAlign(j Justify) (int, error) {
+	if j > JustifyRight {
+		j = JustifyLeft
+	}
+	// Update the style
+	e.Style.Justify = j
+
+	return e.WriteRaw([]byte{esc, 'a', byte(j)})
+}
+
+// SetFont sets the font type
+// Use FontA (12x24) or FontB (9x24)
+func (e *Escpos) SetFont(f uint8) (int, error) {
+	if f > FontB {
+		f = FontA
+	}
+	return e.WriteRaw([]byte{esc, 'M', f})
+}
+
+// SetBold sets the bold mode
+// Use true for bold, false for normal
+func (e *Escpos) SetBold(b bool) (int, error) {
+	return e.WriteRaw([]byte{esc, 'E', boolToByte(b)})
 }
 
 // HRIPosition sets the position of the HRI (Human Readable Interpretation) characters
@@ -604,6 +781,93 @@ func (e *Escpos) OpenDrawer(pin uint8, time uint8) (int, error) {
 // table: code table number (0-255)
 func (e *Escpos) SelectCharacterCodeTable(table uint8) (int, error) {
 	return e.WriteRaw([]byte{esc, 't', table})
+}
+
+// SelectCodePage sets the code page (character set) for the printer
+// The list of available code pages varies by printer model
+func (e *Escpos) SelectCodePage(codepage uint8) (int, error) {
+	return e.WriteRaw([]byte{esc, 't', codepage})
+}
+
+// QueryStatus sends a real-time status request to the printer and returns the response
+// The parameter 'statusType' should be one of the RT_STATUS_* constants
+func (e *Escpos) QueryStatus(statusType byte) ([]byte, error) {
+	// Send the real-time status request
+	_, err := e.WriteRaw([]byte{dle, 0x04, statusType})
+	if err != nil {
+		return nil, fmt.Errorf("failed to send status request: %w", err)
+	}
+
+	// Flush the buffer to ensure the command is sent immediately
+	err = e.dst.Flush()
+	if err != nil {
+		return nil, fmt.Errorf("failed to flush status request: %w", err)
+	}
+
+	// Give the printer some time to respond
+	time.Sleep(100 * time.Millisecond)
+
+	// Read the response
+	if e.reader == nil {
+		return nil, fmt.Errorf("reader not available")
+	}
+
+	buf := make([]byte, 1)
+	n, err := e.reader.Read(buf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read status response: %w", err)
+	}
+
+	if n == 0 {
+		return []byte{}, nil
+	}
+
+	return buf, nil
+}
+
+// IsOnline queries the online status of the printer
+// Returns true if the printer is online, false otherwise
+func (e *Escpos) IsOnline() (bool, error) {
+	status, err := e.QueryStatus(RT_STATUS_ONLINE)
+	if err != nil {
+		return false, err
+	}
+
+	if len(status) == 0 {
+		return false, nil
+	}
+
+	return (status[0] & RT_MASK_ONLINE) == 0, nil
+}
+
+// PaperStatus queries the paper status of the printer
+// Returns:
+// 2: Paper is adequate
+// 1: Paper is low (near end)
+// 0: No paper
+func (e *Escpos) PaperStatus() (int, error) {
+	status, err := e.QueryStatus(RT_STATUS_PAPER)
+	if err != nil {
+		return 2, err // Assume paper is OK if error
+	}
+
+	if len(status) == 0 {
+		return 2, nil // Assume paper is OK if no response
+	}
+
+	if (status[0] & RT_MASK_NOPAPER) == RT_MASK_NOPAPER {
+		return 0, nil // No paper
+	}
+
+	if (status[0] & RT_MASK_LOWPAPER) == RT_MASK_LOWPAPER {
+		return 1, nil // Low paper
+	}
+
+	if (status[0] & RT_MASK_PAPER) == RT_MASK_PAPER {
+		return 2, nil // Paper is adequate
+	}
+
+	return 0, nil // Default case (shouldn't be reached)
 }
 
 // boolToByte converts a boolean to a byte (0x00 or 0x01)
