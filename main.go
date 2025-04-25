@@ -109,6 +109,7 @@ const (
 	CodePagePC860      uint8 = 3  // Portuguese
 	CodePagePC863      uint8 = 4  // Canadian-French
 	CodePagePC865      uint8 = 5  // Nordic
+	CodePageISO8859_1  uint8 = 6  // Western European
 	CodePageWPC1252    uint8 = 16 // Latin 1
 	CodePagePC866      uint8 = 17 // Cyrillic #2
 	CodePagePC852      uint8 = 18 // Latin 2
@@ -273,12 +274,6 @@ func (e *Escpos) WriteWEU(data string) (int, error) {
 	return e.WriteWithEncoding(data, charmap.CodePage850, CodePagePC850)
 }
 
-// WriteRawWEU writes raw bytes to the printer using Western European encoding
-// make sure to set the code page first
-func (e *Escpos) WriteRawWEU(data string) (int, error) {
-	return e.WriteRawWithEncoding([]byte(data), charmap.CodePage850)
-}
-
 // WriteEncoded is deprecated, use WriteWithEncoding instead
 func (e *Escpos) WriteEncoded(data string, encodingName string, codepage uint8) (int, error) {
 	// For backward compatibility, map old encoding names to new encoders
@@ -322,19 +317,20 @@ func (e *Escpos) WriteWithEncoding(data string, enc encoding.Encoding, codepage 
 }
 
 // WriteRawWithEncoding writes raw bytes to the printer after converting them from UTF-8
-// to the specified encoding, make sure to set the code page first
+// to the specified encoding
 func (e *Escpos) WriteRawWithEncoding(data []byte, enc encoding.Encoding) (int, error) {
+	// Create an encoder for the target encoding
 	encoder := enc.NewEncoder()
 
-	data, err := encoding.ReplaceUnsupported(encoder).Bytes(data)
-	if err != nil {
-		return 0, fmt.Errorf("failed to encode data: %w", err)
-	}
-
-	// Convert from UTF-8 to the target encoding
+	// The input data is already in UTF-8, no need to decode first
+	// Just encode directly from UTF-8 to the target encoding
 	encBytes, err := encoder.Bytes(data)
 	if err != nil {
-		return 0, fmt.Errorf("failed to convert string encoding: %w", err)
+		// Handle unsupported characters
+		encBytes, err = encoding.ReplaceUnsupported(encoder).Bytes(data)
+		if err != nil {
+			return 0, fmt.Errorf("failed to encode data: %w", err)
+		}
 	}
 
 	// Write the converted text
@@ -775,12 +771,6 @@ func (e *Escpos) OpenDrawer(pin uint8, time uint8) (int, error) {
 		time = 8
 	}
 	return e.WriteRaw([]byte{esc, 'p', pin, time, time})
-}
-
-// SelectCharacterCodeTable selects the character code table
-// table: code table number (0-255)
-func (e *Escpos) SelectCharacterCodeTable(table uint8) (int, error) {
-	return e.WriteRaw([]byte{esc, 't', table})
 }
 
 // SelectCodePage sets the code page (character set) for the printer
