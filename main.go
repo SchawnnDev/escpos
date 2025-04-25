@@ -432,7 +432,6 @@ func (e *Escpos) SetSize(height, width uint8) (int, error) {
 		height = 8
 	}
 
-	// Calculate the size byte using the formula from PHP implementation
 	sizeByte := (2<<3)*(width-1) + (height - 1)
 
 	// Update the style
