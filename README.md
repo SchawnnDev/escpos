@@ -150,6 +150,10 @@ func (sp *serialPrinter) Read(p []byte) (n int, err error) {
 func (sp *serialPrinter) Write(p []byte) (n int, err error) {
 	return sp.port.Write(p)
 }
+
+func (sp *serialPrinter) Close() error {
+    return sp.port.Close()
+}
 ```
 
 ## Compatibility ##
