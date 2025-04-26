@@ -32,6 +32,13 @@ const (
 	JustifyRight  Justify = 2
 )
 
+// Underline constants
+const (
+	UnderlineNone   uint8 = 0 // No underline
+	UnderlineSingle uint8 = 1 // Single underline
+	UnderlineDouble uint8 = 2 // Double underline
+)
+
 // Font type constants
 const (
 	FontA uint8 = 0 // Font A (12x24)
@@ -573,13 +580,13 @@ func (e *Escpos) PrintNVBitImage(p uint8, mode uint8) (int, error) {
 	return e.WriteRaw([]byte{fs, 'd', p, mode})
 }
 
-// SetLineFeed sends a newline to the printer
-func (e *Escpos) SetLineFeed() (int, error) {
+// LineFeed sends a newline to the printer
+func (e *Escpos) LineFeed() (int, error) {
 	return e.Write("\n")
 }
 
-// SetLineFeedN prints and feeds the paper p lines
-func (e *Escpos) SetLineFeedN(p uint8) (int, error) {
+// LineFeedN prints and feeds the paper p lines
+func (e *Escpos) LineFeedN(p uint8) (int, error) {
 	return e.WriteRaw([]byte{esc, 'd', p})
 }
 
@@ -630,9 +637,9 @@ func (e *Escpos) OpenDrawer(pin uint8, time uint8) (int, error) {
 	return e.WriteRaw([]byte{esc, 'p', pin, time, time})
 }
 
-// SetSelectCodePage sets the code page (character set) for the printer
+// SetCodePage sets the code page (character set) for the printer
 // The list of available code pages varies by printer model
-func (e *Escpos) SetSelectCodePage(codepage uint8) (int, error) {
+func (e *Escpos) SetCodePage(codepage uint8) (int, error) {
 	return e.WriteRaw([]byte{esc, 't', codepage})
 }
 

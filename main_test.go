@@ -411,7 +411,7 @@ func TestSetSelectCodePage(t *testing.T) {
 	mock := NewMockPrinter()
 	p := New(mock)
 
-	_, err := p.SetSelectCodePage(CodePagePC850)
+	_, err := p.SetCodePage(CodePagePC850)
 	assert.NoError(t, err)
 
 	err = p.Print()
@@ -426,7 +426,7 @@ func TestSetLineFeed(t *testing.T) {
 	mock := NewMockPrinter()
 	p := New(mock)
 
-	_, err := p.SetLineFeed()
+	_, err := p.LineFeed()
 	assert.NoError(t, err)
 
 	err = p.Print()
@@ -441,7 +441,7 @@ func TestSetLineFeedN(t *testing.T) {
 	mock := NewMockPrinter()
 	p := New(mock)
 
-	_, err := p.SetLineFeedN(3)
+	_, err := p.LineFeedN(3)
 	assert.NoError(t, err)
 
 	err = p.Print()
