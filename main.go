@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"time"
 
-	"github.com/justinmichaelvieira/iconv"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // Style defines the text formatting options for the printer
@@ -17,14 +20,29 @@ type Style struct {
 	Underline     uint8 // can be 0, 1 or 2
 	UpsideDown    bool
 	Rotate        bool
-	Justify       uint8
+	Justify       Justify
 }
+
+type Justify uint8
 
 // Justification constants
 const (
-	JustifyLeft   uint8 = 0
-	JustifyCenter uint8 = 1
-	JustifyRight  uint8 = 2
+	JustifyLeft   Justify = 0
+	JustifyCenter Justify = 1
+	JustifyRight  Justify = 2
+)
+
+// Underline constants
+const (
+	UnderlineNone   uint8 = 0 // No underline
+	UnderlineSingle uint8 = 1 // Single underline
+	UnderlineDouble uint8 = 2 // Double underline
+)
+
+// Font type constants
+const (
+	FontA uint8 = 0 // Font A (12x24)
+	FontB uint8 = 1 // Font B (9x24)
 )
 
 // QR code error correction levels
@@ -60,11 +78,24 @@ const (
 	HRIPositionBoth  uint8 = 3
 )
 
+// Real-time status command constants
+const (
+	// Real-time status commands
+	RT_STATUS_ONLINE byte = 1
+	RT_STATUS_PAPER  byte = 4
+
+	// Masks
+	RT_MASK_NEAREND byte = 0x0C // bits 2 and 3
+	RT_MASK_NOPAPER byte = 0x60 // bits 5 and 6
+	RT_MASK_OFFLINE byte = 0x08
+)
+
 // ESC/POS command bytes
 const (
 	esc byte = 0x1B
 	gs  byte = 0x1D
 	fs  byte = 0x1C
+	dle byte = 0x10 // Data Link Escape - used for real-time commands
 )
 
 // Image processing method constants
@@ -73,6 +104,39 @@ const (
 	ImageProcessDither uint8 = 0
 	// ImageProcessThreshold applies simple threshold-based conversion
 	ImageProcessThreshold uint8 = 1
+)
+
+// Code page constants
+const (
+	CodePagePC437      uint8 = 0  // USA, Standard Europe
+	CodePageKatakana   uint8 = 1  // Katakana
+	CodePagePC850      uint8 = 2  // Multilingual
+	CodePagePC860      uint8 = 3  // Portuguese
+	CodePagePC863      uint8 = 4  // Canadian-French
+	CodePagePC865      uint8 = 5  // Nordic
+	CodePageISO8859_1  uint8 = 6  // Western European
+	CodePageWPC1252    uint8 = 16 // Latin 1
+	CodePagePC866      uint8 = 17 // Cyrillic #2
+	CodePagePC852      uint8 = 18 // Latin 2
+	CodePagePC858      uint8 = 19 // Euro
+	CodePageIranII     uint8 = 20 // Iran II
+	CodePageLatvian    uint8 = 21 // Latvian
+	CodePageISO88596   uint8 = 22 // Arabic
+	CodePageLCDTurkish uint8 = 24 // Turkish
+	CodePageISO8859_15 uint8 = 25 // Latin 9
+	CodePageCP1098     uint8 = 38 // Farsi
+	CodePageCP864      uint8 = 40 // Arabic
+	CodePageISO8859_2  uint8 = 41 // Latin 2
+	CodePageCP1125     uint8 = 42 // Ukrainian
+	CodePageCP1250     uint8 = 47 // Latin 2
+	CodePageCP1251     uint8 = 48 // Cyrillic
+	CodePageCP1253     uint8 = 49 // Greek
+	CodePageCP1254     uint8 = 50 // Turkish
+	CodePageCP1255     uint8 = 51 // Hebrew
+	CodePageCP1256     uint8 = 52 // Arabic
+	CodePageCP1257     uint8 = 53 // Baltic
+	CodePageCP1258     uint8 = 54 // Vietnamese
+	CodePageKZ1048     uint8 = 55 // Kazakhstan
 )
 
 // PrinterConfig contains options to disable specific formatting features
@@ -88,23 +152,16 @@ type PrinterConfig struct {
 // Escpos represents a ESC/POS printer connection
 type Escpos struct {
 	dst    *bufio.Writer
+	reader io.Reader // Added reader for status queries
 	Style  Style
 	config PrinterConfig
 }
 
 // New creates a new Escpos printer instance
-func New(dst io.Writer) *Escpos {
+func New(printer Printer) *Escpos {
 	return &Escpos{
-		dst: bufio.NewWriter(dst),
-		// Set default style values
-		Style: Style{
-			Bold:      false,
-			Width:     1,
-			Height:    1,
-			Reverse:   false,
-			Underline: 0,
-			Justify:   JustifyLeft,
-		},
+		dst:    bufio.NewWriter(printer),
+		reader: printer,
 	}
 }
 
@@ -144,177 +201,168 @@ func (e *Escpos) WriteRaw(data []byte) (int, error) {
 
 // Write prints a string using the current style settings
 func (e *Escpos) Write(data string) (int, error) {
-	var err error
-	bytesWritten := 0
-
-	// Bold
-	if !e.config.DisableBold {
-		_, err = e.WriteRaw([]byte{esc, 'E', boolToByte(e.Style.Bold)})
-		if err != nil {
-			return 0, fmt.Errorf("failed to set bold style: %w", err)
-		}
-	}
-
-	// Underline
-	if !e.config.DisableUnderline {
-		_, err = e.WriteRaw([]byte{esc, '-', e.Style.Underline})
-		if err != nil {
-			return 0, fmt.Errorf("failed to set underline style: %w", err)
-		}
-	}
-
-	// Reverse
-	if !e.config.DisableReverse {
-		_, err = e.WriteRaw([]byte{gs, 'B', boolToByte(e.Style.Reverse)})
-		if err != nil {
-			return 0, fmt.Errorf("failed to set reverse style: %w", err)
-		}
-	}
-
-	// Rotate
-	if !e.config.DisableRotate {
-		_, err = e.WriteRaw([]byte{esc, 'V', boolToByte(e.Style.Rotate)})
-		if err != nil {
-			return 0, fmt.Errorf("failed to set rotate style: %w", err)
-		}
-	}
-
-	// UpsideDown
-	if !e.config.DisableUpsideDown {
-		_, err = e.WriteRaw([]byte{esc, '{', boolToByte(e.Style.UpsideDown)})
-		if err != nil {
-			return 0, fmt.Errorf("failed to set upside-down style: %w", err)
-		}
-	}
-
-	// Justify
-	if !e.config.DisableJustify {
-		_, err = e.WriteRaw([]byte{esc, 'a', e.Style.Justify})
-		if err != nil {
-			return 0, fmt.Errorf("failed to set justification: %w", err)
-		}
-	}
-
-	// Width / Height
-	_, err = e.WriteRaw([]byte{gs, '!', ((e.Style.Width - 1) << 4) | (e.Style.Height - 1)})
-	if err != nil {
-		return 0, fmt.Errorf("failed to set text size: %w", err)
-	}
-
-	// Write the actual text data
-	n, err := e.WriteRaw([]byte(data))
-	if err != nil {
-		return bytesWritten, fmt.Errorf("failed to write text data: %w", err)
-	}
-	bytesWritten += n
-
-	return bytesWritten, nil
+	return e.WriteRaw([]byte(data))
 }
 
 // WriteGBK writes a string to the printer using GBK encoding
 func (e *Escpos) WriteGBK(data string) (int, error) {
-	gbk, err := iconv.ConvertString(data, iconv.GBK, iconv.UTF8)
-	if err != nil {
-		return 0, fmt.Errorf("failed to convert to GBK encoding: %w", err)
-	}
-	return e.Write(gbk)
+	return e.WriteWithEncoding(data, simplifiedchinese.GBK, CodePagePC437)
 }
 
 // WriteWEU writes a string to the printer using Western European encoding
 func (e *Escpos) WriteWEU(data string) (int, error) {
-	weu, err := iconv.ConvertString(data, iconv.CP850, iconv.UTF8)
+	return e.WriteWithEncoding(data, charmap.CodePage850, CodePagePC850)
+}
+
+// WriteWithEncoding writes text after converting it from UTF-8 to the specified encoding
+// and setting the appropriate code page on the printer
+func (e *Escpos) WriteWithEncoding(data string, enc encoding.Encoding, codepage uint8) (int, error) {
+	return e.WriteRawWithEncoding([]byte(data), enc)
+}
+
+// WriteRawWithEncoding writes raw bytes to the printer after converting them from UTF-8
+// to the specified encoding
+func (e *Escpos) WriteRawWithEncoding(data []byte, enc encoding.Encoding) (int, error) {
+	// Create an encoder for the target encoding
+	encoder := enc.NewEncoder()
+
+	// The input data is already in UTF-8, no need to decode first
+	// Just encode directly from UTF-8 to the target encoding
+	encBytes, err := encoder.Bytes(data)
 	if err != nil {
-		return 0, fmt.Errorf("failed to convert to Western European encoding: %w", err)
+		// Handle unsupported characters
+		encBytes, err = encoding.ReplaceUnsupported(encoder).Bytes(data)
+		if err != nil {
+			return 0, fmt.Errorf("failed to encode data: %w", err)
+		}
 	}
-	return e.Write(weu)
+
+	// Write the converted text
+	return e.WriteRaw(encBytes)
 }
 
-// Bold sets the printer to print bold text
-func (e *Escpos) Bold(p bool) *Escpos {
-	e.Style.Bold = p
-	return e
-}
-
-// Underline sets the underline style with thickness p (0-2 dots)
-func (e *Escpos) Underline(p uint8) *Escpos {
-	if p > 2 {
-		p = 2
-	}
-	e.Style.Underline = p
-	return e
-}
-
-// Reverse sets reverse printing (white text on black background)
-func (e *Escpos) Reverse(p bool) *Escpos {
-	e.Style.Reverse = p
-	return e
-}
-
-// Justify sets text justification (alignment)
-// Use JustifyLeft, JustifyCenter, or JustifyRight constants
-func (e *Escpos) Justify(p uint8) *Escpos {
-	if p > JustifyRight {
-		p = JustifyLeft
-	}
-	e.Style.Justify = p
-	return e
-}
-
-// Rotate toggles 90° clockwise rotation
-func (e *Escpos) Rotate(p bool) *Escpos {
-	e.Style.Rotate = p
-	return e
-}
-
-// UpsideDown toggles upside-down printing
-func (e *Escpos) UpsideDown(p bool) *Escpos {
-	e.Style.UpsideDown = p
-	return e
-}
-
-// Size sets the font size. Width and Height should be between 1 and 5.
-func (e *Escpos) Size(width uint8, height uint8) *Escpos {
-	// Ensure values are between 1 and 5
+// SetSize sets the font size by specifying both height and width (1-8)
+// The function applies the corresponding byte value based on the formula:
+// c = (2 << 3) * (width - 1) + (height - 1)
+func (e *Escpos) SetSize(height, width uint8) (int, error) {
+	// Ensure values are between 1 and 8
 	if width < 1 {
 		width = 1
-	} else if width > 5 {
-		width = 5
+	} else if width > 8 {
+		width = 8
 	}
 
 	if height < 1 {
 		height = 1
-	} else if height > 5 {
-		height = 5
+	} else if height > 8 {
+		height = 8
 	}
 
-	e.Style.Width = width
+	sizeByte := (2<<3)*(width-1) + (height - 1)
+
+	// Update the style
 	e.Style.Height = height
-	return e
+	e.Style.Width = width
+
+	// Send the command to the printer
+	return e.WriteRaw([]byte{gs, '!', sizeByte})
 }
 
-// HRIPosition sets the position of the HRI (Human Readable Interpretation) characters
+// SetJustify sets the justification for text
+// Use JustifyLeft, JustifyCenter, or JustifyRight constants
+func (e *Escpos) SetJustify(j Justify) (int, error) {
+	if e.config.DisableJustify {
+		return 0, fmt.Errorf("justification is disabled in the printer configuration")
+	}
+	if j > JustifyRight {
+		j = JustifyLeft
+	}
+	// Update the style
+	e.Style.Justify = j
+
+	return e.WriteRaw([]byte{esc, 'a', byte(j)})
+}
+
+// SetBold sets the bold mode
+// Use true for bold, false for normal
+func (e *Escpos) SetBold(b bool) (int, error) {
+	if e.config.DisableBold {
+		return 0, fmt.Errorf("bold mode is disabled in the printer configuration")
+	}
+	return e.WriteRaw([]byte{esc, 'E', boolToByte(b)})
+}
+
+// SetUnderline sets the underline mode
+// Use 0 for no underline, 1 for single underline, and 2 for double underline
+func (e *Escpos) SetUnderline(u uint8) (int, error) {
+	if e.config.DisableUnderline {
+		return 0, fmt.Errorf("underline mode is disabled in the printer configuration")
+	}
+	if u > 2 {
+		u = 0
+	}
+	return e.WriteRaw([]byte{esc, '-', u})
+}
+
+// SetUpsideDown sets the upside-down mode
+// Use true for upside-down, false for normal
+func (e *Escpos) SetUpsideDown(u bool) (int, error) {
+	if e.config.DisableUpsideDown {
+		return 0, fmt.Errorf("upside-down mode is disabled in the printer configuration")
+	}
+	return e.WriteRaw([]byte{esc, '{', boolToByte(u)})
+}
+
+// SetRotate sets the 90° clockwise rotation
+// Use true for rotated, false for normal
+func (e *Escpos) SetRotate(r bool) (int, error) {
+	if e.config.DisableRotate {
+		return 0, fmt.Errorf("rotation mode is disabled in the printer configuration")
+	}
+	return e.WriteRaw([]byte{esc, 'V', boolToByte(r)})
+}
+
+// SetReverse sets the reverse printing mode
+// Use true for reverse, false for normal
+func (e *Escpos) SetReverse(r bool) (int, error) {
+	if e.config.DisableReverse {
+		return 0, fmt.Errorf("reverse mode is disabled in the printer configuration")
+	}
+	return e.WriteRaw([]byte{gs, 'B', boolToByte(r)})
+}
+
+// SetFont sets the font type
+// Use FontA (12x24) or FontB (9x24)
+func (e *Escpos) SetFont(f uint8) (int, error) {
+	if f > FontB {
+		f = FontA
+	}
+	return e.WriteRaw([]byte{esc, 'M', f})
+}
+
+// SetHRIPosition sets the position of the HRI (Human Readable Interpretation) characters
 // Use the HRIPosition constants
-func (e *Escpos) HRIPosition(p uint8) (int, error) {
+func (e *Escpos) SetHRIPosition(p uint8) (int, error) {
 	if p > HRIPositionBoth {
 		return 0, fmt.Errorf("invalid HRI position: must be between 0-3")
 	}
 	return e.WriteRaw([]byte{gs, 'H', p})
 }
 
-// HRIFont sets the HRI font
+// SetHRIFont sets the HRI font
 // false: Font A (12x24)
 // true: Font B (9x24)
-func (e *Escpos) HRIFont(p bool) (int, error) {
+func (e *Escpos) SetHRIFont(p bool) (int, error) {
 	return e.WriteRaw([]byte{gs, 'f', boolToByte(p)})
 }
 
-// BarcodeHeight sets the height for barcodes in dots (default: 162)
-func (e *Escpos) BarcodeHeight(p uint8) (int, error) {
+// SetBarcodeHeight sets the height for barcodes in dots (default: 162)
+func (e *Escpos) SetBarcodeHeight(p uint8) (int, error) {
 	return e.WriteRaw([]byte{gs, 'h', p})
 }
 
-// BarcodeWidth sets the width for barcodes (2-6, default: 3)
-func (e *Escpos) BarcodeWidth(p uint8) (int, error) {
+// SetBarcodeWidth sets the width for barcodes (2-6, default: 3)
+func (e *Escpos) SetBarcodeWidth(p uint8) (int, error) {
 	if p < 2 {
 		p = 2
 	}
@@ -490,12 +538,6 @@ func (e *Escpos) QRCode(code string, model uint8, size uint8, correctionLevel ui
 	return written, nil
 }
 
-// PrintImage prints an image to the printer
-// Deprecated: Use PrintImageWithProcessing instead
-func (e *Escpos) PrintImage(image image.Image) (int, error) {
-	return e.PrintImageWithProcessing(image, ImageProcessThreshold, false, false)
-}
-
 // PrintImageWithProcessing prints an image to the printer using the specified processing method
 // Multiple parameters are available to control the image processing:
 //   - image: the image to print
@@ -507,7 +549,7 @@ func (e *Escpos) PrintImage(image image.Image) (int, error) {
 func (e *Escpos) PrintImageWithProcessing(image image.Image, processMethod uint8, highDensityVertical bool, highDensityHorizontal bool) (int, error) {
 	switch processMethod {
 	case ImageProcessDither:
-		data, err := printImageDither(image, true, true)
+		data, err := PrepareImageForPrinting(image, highDensityVertical, highDensityHorizontal)
 		if err != nil {
 			return 0, fmt.Errorf("failed to transform dithered image: %w", err)
 		}
@@ -548,13 +590,13 @@ func (e *Escpos) LineFeedN(p uint8) (int, error) {
 	return e.WriteRaw([]byte{esc, 'd', p})
 }
 
-// DefaultLineSpacing sets the line spacing to the default (1/6 inch)
-func (e *Escpos) DefaultLineSpacing() (int, error) {
+// SetDefaultLineSpacing sets the line spacing to the default (1/6 inch)
+func (e *Escpos) SetDefaultLineSpacing() (int, error) {
 	return e.WriteRaw([]byte{esc, '2'})
 }
 
-// LineSpacing sets the line spacing to p/180 inch (ESC/POS)
-func (e *Escpos) LineSpacing(p uint8) (int, error) {
+// SetLineSpacing sets the line spacing to p/180 inch (ESC/POS)
+func (e *Escpos) SetLineSpacing(p uint8) (int, error) {
 	return e.WriteRaw([]byte{esc, '3', p})
 }
 
@@ -563,10 +605,10 @@ func (e *Escpos) Initialize() (int, error) {
 	return e.WriteRaw([]byte{esc, '@'})
 }
 
-// MotionUnits sets the horizontal (x) and vertical (y) motion units
+// SetMotionUnits sets the horizontal (x) and vertical (y) motion units
 // x: horizontal motion unit (25.4/x mm)
 // y: vertical motion unit (25.4/y mm)
-func (e *Escpos) MotionUnits(x, y uint8) (int, error) {
+func (e *Escpos) SetMotionUnits(x, y uint8) (int, error) {
 	return e.WriteRaw([]byte{gs, 'P', x, y})
 }
 
@@ -595,10 +637,96 @@ func (e *Escpos) OpenDrawer(pin uint8, time uint8) (int, error) {
 	return e.WriteRaw([]byte{esc, 'p', pin, time, time})
 }
 
-// SelectCharacterCodeTable selects the character code table
-// table: code table number (0-255)
-func (e *Escpos) SelectCharacterCodeTable(table uint8) (int, error) {
-	return e.WriteRaw([]byte{esc, 't', table})
+// SetCodePage sets the code page (character set) for the printer
+// The list of available code pages varies by printer model
+func (e *Escpos) SetCodePage(codepage uint8) (int, error) {
+	return e.WriteRaw([]byte{esc, 't', codepage})
+}
+
+// QueryStatus sends a real-time status request to the printer and returns the response
+// The parameter 'statusType' should be one of the RT_STATUS_* constants
+func (e *Escpos) QueryStatus(statusType byte) ([]byte, error) {
+	// Send the real-time status request
+	_, err := e.WriteRaw([]byte{dle, 0x04, statusType})
+	if err != nil {
+		return nil, fmt.Errorf("failed to send status request: %w", err)
+	}
+
+	// Flush the buffer to ensure the command is sent immediately
+	err = e.dst.Flush()
+	if err != nil {
+		return nil, fmt.Errorf("failed to flush status request: %w", err)
+	}
+
+	// Give the printer some time to respond
+	time.Sleep(100 * time.Millisecond)
+
+	// Read the response
+	if e.reader == nil {
+		return nil, fmt.Errorf("reader not available")
+	}
+
+	buf := make([]byte, 1)
+	n, err := e.reader.Read(buf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read status response: %w", err)
+	}
+
+	if n == 0 {
+		return []byte{}, nil
+	}
+
+	return buf, nil
+}
+
+// IsOnline queries the online status of the printer
+// Returns true if the printer is online, false otherwise
+func (e *Escpos) IsOnline() (bool, error) {
+	status, err := e.QueryStatus(RT_STATUS_ONLINE)
+	if err != nil {
+		return false, err
+	}
+
+	if len(status) == 0 {
+		return false, nil // Assume offline if no response
+	}
+
+	b := status[0]
+
+	// If bit 3 is set, printer is offline
+	isOffline := b&RT_MASK_OFFLINE == RT_MASK_OFFLINE
+
+	return !isOffline, nil // Return true if online
+}
+
+// PaperStatus queries the paper status using DLE EOT 4
+// Returns:
+// 2 = Paper is adequate
+// 1 = Paper is low (near end)
+// 0 = No paper
+func (e *Escpos) PaperStatus() (int, error) {
+	status, err := e.QueryStatus(RT_STATUS_PAPER)
+	if err != nil {
+		return 2, err // Assume paper is OK if error
+	}
+
+	if len(status) == 0 {
+		return 2, nil // Assume paper is OK if no response
+	}
+
+	b := status[0]
+
+	// Check end sensor first (bits 5-6)
+	if b&RT_MASK_NOPAPER == RT_MASK_NOPAPER {
+		return 0, nil // No paper
+	}
+
+	// Then check near-end sensor (bits 2-3)
+	if b&RT_MASK_NEAREND == RT_MASK_NEAREND {
+		return 1, nil // Low paper
+	}
+
+	return 2, nil // Paper is adequate
 }
 
 // boolToByte converts a boolean to a byte (0x00 or 0x01)
@@ -611,6 +739,9 @@ func boolToByte(b bool) byte {
 
 // onlyDigits checks if a string contains only digits
 func onlyDigits(s string) bool {
+	if s == "" {
+		return false
+	}
 	for _, c := range s {
 		if c < '0' || c > '9' {
 			return false

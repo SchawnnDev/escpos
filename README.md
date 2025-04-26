@@ -1,12 +1,9 @@
-# About escpos [![GoDoc](https://godoc.org/github.com/hennedo/escpos?status.svg)](https://godoc.org/github.com/hennedo/escpos)
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fhennedo%2Fescpos.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fhennedo%2Fescpos?ref=badge_shield)
-[![Go Reference](https://pkg.go.dev/badge/github.com/hennedo/escpos.svg)](https://pkg.go.dev/github.com/hennedo/escpos)
+# About escpos [![GoDoc](https://godoc.org/github.com/schawnndev/escpos?status.svg)](https://godoc.org/github.com/schawnndev/escpos)
+[![Go Reference](https://pkg.go.dev/badge/github.com/schawnndev/escpos.svg)](https://pkg.go.dev/github.com/schawnndev/escpos)
 
 This is a [Golang](http://www.golang.org/project) package that provides
 [ESC-POS](https://en.wikipedia.org/wiki/ESC/P) library functions to help with
 sending control codes to a ESC-POS thermal printer.
-
-It was largely inspired by [seer-robotics/escpos](https://github.com/seer-robotics/escpos) but is a complete rewrite.
 
 It implements the protocol described in [this Command Manual](https://pos-x.com/download/escpos-programming-manual/)
 
@@ -16,7 +13,7 @@ It implements the protocol described in [this Command Manual](https://pos-x.com/
   * [x] Toggling Bold text
   * [x] Toggling upside-down character printing
   * [x] Toggling Reverse mode
-  * [x] Linespace settings
+  * [x] Line spacing settings
   * [x] Rotated characters
   * [x] Align text
   * [x] Default ASCII Charset, Western Europe and GBK encoding
@@ -26,12 +23,13 @@ It implements the protocol described in [this Command Manual](https://pos-x.com/
   * [x] Standard printing mode
   * [x] Image Printing
   * [x] Printing of predefined NV images
+  * [x] Cash drawer control
 
 ## Installation ##
 
 Install the package via the following:
 
-    go get -u github.com/hennedo/escpos
+    go get -u github.com/schawnndev/escpos
 
 ## Usage ##
 
@@ -41,31 +39,64 @@ The escpos package can be used as the following:
 package main
 
 import (
-	"github.com/hennedo/escpos"
-	"net"
+	"github.com/schawnndev/escpos"
 )
 
 func main() {
-	socket, err := net.Dial("tcp", "192.168.8.40:9100")
+	nwPrinter, err := escpos.NewNetworkPrinter("192.168.8.40:9100")
 	if err != nil {
 		println(err.Error())
+		return
 	}
-	defer socket.Close()
-
-	p := escpos.New(socket)
+	defer nwPrinter.Close()
+	
+	p := escpos.New(nwPrinter)
 	p.SetConfig(escpos.ConfigEpsonTMT20II)
 
-	p.Bold(true).Size(2, 2).Write("Hello World")
+	p.SetBold(true)
+	p.SetSize(2, 2)
+	p.Write("Hello World")
 	p.LineFeed()
-	p.Bold(false).Underline(2).Justify(escpos.JustifyCenter).Write("this is underlined")
+	
+	p.SetBold(false)
+	p.SetUnderline(escpos.UnderlineSingle)
+	p.SetJustify(escpos.JustifyCenter)
+	p.Write("this is underlined")
 	p.LineFeed()
-	p.QRCode("https://github.com/hennedo/escpos", true, 10, escpos.QRCodeErrorCorrectionLevelH)
-
-
+	p.QRCode("https://github.com/schawnndev/escpos", escpos.QRCodeModel2, 3, escpos.QRCodeErrorCorrectionLevelL)
 
 	// You need to use either p.Print() or p.PrintAndCut() at the end to send the data to the printer.
 	p.PrintAndCut()
 }
+```
+
+## Setting Printer Parameters ##
+
+The library provides a consistent naming convention for functions that set parameters, using the `Set` prefix:
+
+```go
+// Setting text parameters
+p.SetBold(true)
+p.SetUnderline(escpos.UnderlineDouble)
+p.SetUpsideDown(true)
+p.SetReverse(true)
+p.SetJustify(escpos.JustifyCenter)
+p.SetSize(2, 2)
+p.SetFont(escpos.FontB)
+
+// Setting line parameters
+p.SetLineSpacing(30)
+p.SetDefaultLineSpacing()
+
+// Setting barcode parameters
+p.SetBarcodeHeight(100)
+p.SetBarcodeWidth(4)
+p.SetHRIPosition(escpos.HRIPositionBelow)
+p.SetHRIFont(true)
+
+// Other control functions
+p.SetMotionUnits(10, 20)
+p.SetCodePage(escpos.CodePagePC850)
 ```
 
 ## Disable features ##
@@ -79,7 +110,50 @@ p.SetConfig(escpos.ConfigEpsonTMT20II) // predefined config for the Epson TM-T20
 
 // or for example
 
-p.SetConfig(escpos.PrinterConfig(DisableUnderline: true))
+p.SetConfig(escpos.PrinterConfig{DisableUnderline: true})
+```
+
+## Other Printer Sources ##
+
+If you want to use other printer sources, you can implement the `Printer` interface provided by the library.
+The `Printer` interface defines the basic methods (`Read`, `Write`, and `Close`) required for communication with a printer.
+This allows flexibility to connect to printers using different protocols or sources, such as serial, network, or custom implementations.
+
+For example, to implement a serial printer connection, you can do the following:
+
+```go
+package escpos
+
+import "go.bug.st/serial"
+
+type serialPrinter struct {
+	port serial.Port
+}
+
+func NewSerialPrinter(portName string, baudRate int) (Printer, error) {
+	mode := &serial.Mode{
+		BaudRate: baudRate,
+	}
+	port, err := serial.Open(portName, mode)
+	if err != nil {
+		return nil, err
+	}
+	return &serialPrinter{
+		port: port,
+	}, nil
+}
+
+func (sp *serialPrinter) Read(p []byte) (n int, err error) {
+	return sp.port.Read(p)
+}
+
+func (sp *serialPrinter) Write(p []byte) (n int, err error) {
+	return sp.port.Write(p)
+}
+
+func (sp *serialPrinter) Close() error {
+    return sp.port.Close()
+}
 ```
 
 ## Compatibility ##
@@ -90,5 +164,4 @@ This is a (not complete) list of supported and tested devices.
 |--------------|----------| --------- | -------- | ------ | ------ |
 | Epson        | TM-T20II | ✅        | ✅        | ✅     | ✅     |
 | Epson        | TM-T88II | ☑️<br/>UpsideDown Printing not supported  | ✅        |       | ✅     |
-| Munbyn       | ITPP047P | ☑️<br/>UpsideDown Printing not supported  | ✅        |  ✅    | ✅     |
-
+| Munbyn       | ITPP047P | ✅  | ✅        |  ✅    | ✅     |
