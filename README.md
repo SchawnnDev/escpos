@@ -40,17 +40,17 @@ package main
 
 import (
 	"github.com/schawnndev/escpos"
-	"net"
 )
 
 func main() {
-	socket, err := net.Dial("tcp", "192.168.8.40:9100")
+	nwPrinter, err := escpos.NewNetworkPrinter("192.168.8.40:9100")
 	if err != nil {
 		println(err.Error())
+		return
 	}
-	defer socket.Close()
-
-	p := escpos.New(socket)
+	defer nwPrinter.Close()
+	
+	p := escpos.New(nwPrinter)
 	p.SetConfig(escpos.ConfigEpsonTMT20II)
 
 	p.SetBold(true)
@@ -111,6 +111,45 @@ p.SetConfig(escpos.ConfigEpsonTMT20II) // predefined config for the Epson TM-T20
 // or for example
 
 p.SetConfig(escpos.PrinterConfig{DisableUnderline: true})
+```
+
+## Other Printer Sources ##
+
+If you want to use other printer sources, you can implement the `Printer` interface provided by the library.
+The `Printer` interface defines the basic methods (`Read`, `Write`, and `Close`) required for communication with a printer.
+This allows flexibility to connect to printers using different protocols or sources, such as serial, network, or custom implementations.
+
+For example, to implement a serial printer connection, you can do the following:
+
+```go
+package escpos
+
+import "go.bug.st/serial"
+
+type serialPrinter struct {
+	port serial.Port
+}
+
+func NewSerialPrinter(portName string, baudRate int) (Printer, error) {
+	mode := &serial.Mode{
+		BaudRate: baudRate,
+	}
+	port, err := serial.Open(portName, mode)
+	if err != nil {
+		return nil, err
+	}
+	return &serialPrinter{
+		port: port,
+	}, nil
+}
+
+func (sp *serialPrinter) Read(p []byte) (n int, err error) {
+	return sp.port.Read(p)
+}
+
+func (sp *serialPrinter) Write(p []byte) (n int, err error) {
+	return sp.port.Write(p)
+}
 ```
 
 ## Compatibility ##

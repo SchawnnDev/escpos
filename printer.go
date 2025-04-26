@@ -1,6 +1,8 @@
 package escpos
 
-import "net"
+import (
+	"net"
+)
 
 type Printer interface {
 	Read(p []byte) (n int, err error)
@@ -10,6 +12,16 @@ type Printer interface {
 
 type networkPrinter struct {
 	conn net.Conn
+}
+
+func NewNetworkPrinter(address string) (Printer, error) {
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	return &networkPrinter{
+		conn: conn,
+	}, nil
 }
 
 func (np *networkPrinter) Read(p []byte) (n int, err error) {
@@ -22,14 +34,4 @@ func (np *networkPrinter) Write(p []byte) (n int, err error) {
 
 func (np *networkPrinter) Close() error {
 	return np.conn.Close()
-}
-
-func NewNetworkPrinter(address string) (Printer, error) {
-	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		return nil, err
-	}
-	return &networkPrinter{
-		conn: conn,
-	}, nil
 }
