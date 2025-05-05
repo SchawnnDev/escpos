@@ -2,6 +2,7 @@ package escpos
 
 import (
 	"net"
+	"time"
 )
 
 type Printer interface {
@@ -14,14 +15,48 @@ type networkPrinter struct {
 	conn net.Conn
 }
 
-func NewNetworkPrinter(address string) (Printer, error) {
+// PrinterOption defines a function that configures a network printer
+type PrinterOption func(*networkPrinter) error
+
+// WithDeadline sets both read and write deadlines
+func WithDeadline(t time.Time) PrinterOption {
+	return func(np *networkPrinter) error {
+		return np.conn.SetDeadline(t)
+	}
+}
+
+// WithReadDeadline sets the deadline for future Read calls
+func WithReadDeadline(t time.Time) PrinterOption {
+	return func(np *networkPrinter) error {
+		return np.conn.SetReadDeadline(t)
+	}
+}
+
+// WithWriteDeadline sets the deadline for future Write calls
+func WithWriteDeadline(t time.Time) PrinterOption {
+	return func(np *networkPrinter) error {
+		return np.conn.SetWriteDeadline(t)
+	}
+}
+
+func NewNetworkPrinter(address string, opts ...PrinterOption) (Printer, error) {
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
 		return nil, err
 	}
-	return &networkPrinter{
+
+	np := &networkPrinter{
 		conn: conn,
-	}, nil
+	}
+
+	for _, opt := range opts {
+		if err = opt(np); err != nil {
+			conn.Close()
+			return nil, err
+		}
+	}
+
+	return np, nil
 }
 
 func (np *networkPrinter) Read(p []byte) (n int, err error) {
