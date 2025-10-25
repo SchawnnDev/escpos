@@ -12,10 +12,11 @@ type Printer interface {
 }
 
 type networkPrinter struct {
-	conn         net.Conn
-	timeout      time.Duration
-	readTimeout  time.Duration
-	writeTimeout time.Duration
+	conn           net.Conn
+	timeout        time.Duration
+	readTimeout    time.Duration
+	writeTimeout   time.Duration
+	connectTimeout time.Duration
 }
 
 // PrinterOption defines a function that configures a network printer
@@ -25,6 +26,14 @@ type PrinterOption func(*networkPrinter) error
 func WithTimeout(d time.Duration) PrinterOption {
 	return func(np *networkPrinter) error {
 		np.timeout = d
+		return nil
+	}
+}
+
+// WithConnectTimeout sets the timeout duration for the initial connection establishment
+func WithConnectTimeout(d time.Duration) PrinterOption {
+	return func(np *networkPrinter) error {
+		np.connectTimeout = d
 		return nil
 	}
 }
@@ -70,22 +79,30 @@ func WithWriteDeadline(t time.Time) PrinterOption {
 }
 
 func NewNetworkPrinter(address string, opts ...PrinterOption) (Printer, error) {
-	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		return nil, err
-	}
+	np := &networkPrinter{}
 
-	np := &networkPrinter{
-		conn: conn,
-	}
-
+	// Apply options first to get the connectTimeout
 	for _, opt := range opts {
-		if err = opt(np); err != nil {
-			_ = conn.Close()
+		if err := opt(np); err != nil {
 			return nil, err
 		}
 	}
 
+	// Use net.Dialer with timeout if connectTimeout is set
+	var conn net.Conn
+	var err error
+	if np.connectTimeout > 0 {
+		d := net.Dialer{Timeout: np.connectTimeout}
+		conn, err = d.Dial("tcp", address)
+	} else {
+		conn, err = net.Dial("tcp", address)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	np.conn = conn
 	return np, nil
 }
 
