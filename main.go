@@ -151,17 +151,27 @@ type PrinterConfig struct {
 
 // Escpos represents a ESC/POS printer connection
 type Escpos struct {
-	dst    *bufio.Writer
-	reader io.Reader // Added reader for status queries
-	Style  Style
-	config PrinterConfig
+	dst      *bufio.Writer
+	reader   io.Reader // Added reader for status queries
+	Style    Style
+	config   PrinterConfig
+	enc      encoding.Encoding // default encoding used by Write()
+	codepage uint8             // current active code page
 }
 
-// New creates a new Escpos printer instance
+// New creates a new Escpos printer instance.
+// PC850 (code page 2 – "Multilingual") is set as the default encoding so that
+// accented characters like é, ç, à, ù, è work correctly out of the box for
+// Western European languages.  PC850 has near-universal support on thermal
+// ESC/POS printers; Windows-1252 (code page 16) is often silently ignored by
+// cheaper or older printer firmware.  Call SetEncoding to switch to a
+// different character set.
 func New(printer Printer) *Escpos {
 	return &Escpos{
-		dst:    bufio.NewWriter(printer),
-		reader: printer,
+		dst:      bufio.NewWriter(printer),
+		reader:   printer,
+		enc:      charmap.CodePage850,
+		codepage: CodePagePC850,
 	}
 }
 
@@ -199,24 +209,69 @@ func (e *Escpos) WriteRaw(data []byte) (int, error) {
 	return 0, nil
 }
 
-// Write prints a string using the current style settings
+// SetEncoding sets the default character encoding used by Write() and sends the
+// corresponding ESC t (code page) command to the printer so both sides agree on
+// the character table.  Pass nil as enc to disable encoding and revert to raw
+// UTF-8 passthrough.
+//
+// The default encoding set by New() is PC850 (CodePagePC850), which covers all
+// Western European characters (é ç à ù è …) and is supported by virtually all
+// thermal ESC/POS printers.
+//
+// Example – switch to Windows-1252 (if your printer supports code page 16):
+//
+//	e.SetEncoding(charmap.Windows1252, escpos.CodePageWPC1252)
+//
+// Example – disable encoding (raw bytes):
+//
+//	e.SetEncoding(nil, 0)
+func (e *Escpos) SetEncoding(enc encoding.Encoding, codepage uint8) (int, error) {
+	e.enc = enc
+	e.codepage = codepage
+	if enc == nil {
+		return 0, nil // nothing to send when disabling encoding
+	}
+	return e.SetCodePage(codepage)
+}
+
+// Write prints a string using the current style settings.
+// By default (Windows-1252 encoding set in New), accented characters like
+// é, ç, à, ù, è are automatically converted from UTF-8 to the printer's
+// active code page.  The ESC t code-page command is re-sent before each
+// write so the correct character set is always active, even after a call
+// to Initialize() which resets the printer.
 func (e *Escpos) Write(data string) (int, error) {
+	if e.enc != nil {
+		// Always re-assert the code page before writing so we stay correct
+		// even after Initialize() or other printer resets.
+		if _, err := e.SetCodePage(e.codepage); err != nil {
+			return 0, fmt.Errorf("failed to set code page before write: %w", err)
+		}
+		return e.WriteRawWithEncoding([]byte(data), e.enc)
+	}
 	return e.WriteRaw([]byte(data))
 }
 
-// WriteGBK writes a string to the printer using GBK encoding
+// WriteGBK writes a string to the printer using GBK encoding (Simplified Chinese).
+// Note: GBK-capable printers handle the character set switch internally; no
+// ESC t code-page command is sent.
 func (e *Escpos) WriteGBK(data string) (int, error) {
-	return e.WriteWithEncoding(data, simplifiedchinese.GBK, CodePagePC437)
+	return e.WriteRawWithEncoding([]byte(data), simplifiedchinese.GBK)
 }
 
-// WriteWEU writes a string to the printer using Western European encoding
+// WriteWEU writes a string to the printer using Western European encoding (CP850).
+// It sets code page PC850 on the printer before sending the encoded bytes.
 func (e *Escpos) WriteWEU(data string) (int, error) {
 	return e.WriteWithEncoding(data, charmap.CodePage850, CodePagePC850)
 }
 
-// WriteWithEncoding writes text after converting it from UTF-8 to the specified encoding
-// and setting the appropriate code page on the printer
+// WriteWithEncoding writes text after converting it from UTF-8 to the specified
+// encoding and setting the appropriate code page on the printer (ESC t).
 func (e *Escpos) WriteWithEncoding(data string, enc encoding.Encoding, codepage uint8) (int, error) {
+	// Tell the printer which code page to use so it interprets the bytes correctly.
+	if _, err := e.SetCodePage(codepage); err != nil {
+		return 0, fmt.Errorf("failed to set code page: %w", err)
+	}
 	return e.WriteRawWithEncoding([]byte(data), enc)
 }
 
